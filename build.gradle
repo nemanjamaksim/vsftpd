@@ -9,7 +9,7 @@ buildscript {
 }
 
 ext {
-	artifactId = 'cfnbase'
+	artifactId = 'cfn_s3fs'
 	templateBucket = 'cm-public-cfn-templates'
 }
 
