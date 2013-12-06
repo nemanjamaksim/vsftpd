@@ -1,0 +1,198 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+    "Description" : "S3FScloudformation file.",
+    "Parameters" : {
+        "InstanceType": {
+            "Default": "t1.micro",
+            "Description": "EC2 instance type",
+            "Type": "String",
+            "AllowedValues": [
+                "t1.micro", "m1.small", "m1.medium", "m1.large", "m1.xlarge", "m2.xlarge", "m2.2xlarge",
+                "m2.4xlarge", "c1.medium", "c1.xlarge", "cc1.4xlarge", "cc2.8xlarge", "cg1.4xlarge"
+            ],
+            "ConstraintDescription": "must be a valid EC2 instance type."
+        },
+        "KeyName" : {
+            "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+            "Type" : "String",
+            "MinLength" : "1",
+            "MaxLength" : "64",
+            "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+            "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+        },
+        "VpcId" : {
+            "Type" : "String",
+            "Description" : "VpcId of your existing Virtual Private Cloud (VPC)"
+        },
+        "SubnetId" : {
+            "Type" : "String",
+            "Description" : "SubnetId in your Virtual Private Cloud (VPC)"
+        },
+        "BucketName" : {
+            "Default" : "bucketname",
+            "Type" : "String",
+            "Description" : "s3"
+        }
+    },
+    "Mappings" : {
+        "AWSAmazonLinuxAMI": {
+            "us-east-1":      { "name":"Virginia",   "201303": "ami-3275ee5b", "201309": "ami-35792c5c" },
+            "us-west-2":      { "name":"Oregon",     "201303": "ami-ecbe2adc", "201309": "ami-d03ea1e0" },
+            "us-west-1":      { "name":"California", "201303": "ami-66d1fc23", "201309": "ami-687b4f2d" },
+            "eu-west-1":      { "name":"Ireland",    "201303": "ami-44939930", "201309": "ami-149f7863" },
+            "ap-southeast-1": { "name":"Singapole",  "201303": "ami-aa9ed2f8", "201309": "ami-14f2b946" },
+            "ap-southeast-2": { "name":"Sydney",     "201303": "ami-363eaf0c", "201309": "ami-a148d59b" },
+            "ap-northeast-1": { "name":"Tokyo",      "201303": "ami-173fbf16", "201309": "ami-3561fe34" },
+            "sa-east-1":      { "name":"SaoPaulo",   "201303": "ami-dd6bb0c0", "201309": "ami-9f6ec982" }
+        }
+    },
+    "Resources" : {
+        "S3FSRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "AssumeRolePolicyDocument" : {
+                    "Statement": [ {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [ "ec2.amazonaws.com" ]
+                        },
+                        "Action": [ "sts:AssumeRole" ]
+                    } ]
+                },
+                "Path" : "/",
+                "Policies" :[ {
+                    "PolicyName" : "s3fspolicy",
+                    "PolicyDocument" : {
+                        "Statement": [
+                            {
+                                "Sid": "S3",
+                                "Resource": "*",
+                                "Effect": "Allow",
+                                "Action": [
+                                    "s3:*"
+                                ]
+                            }
+                        ]
+                    }
+                }]
+            }
+        },
+        "S3FSProfile" : {
+            "Type" : "AWS::IAM::InstanceProfile",
+            "Properties" : {
+                "Roles" : [ { "Ref" : "S3FSRole" } ]
+            }
+        },
+
+        "S3FSSecurityGroup" : {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "VpcId" : {"Ref" : "VpcId"},
+                "GroupDescription" : "Enable HTTP/HTTPS access via port 80/443",
+                "SecurityGroupIngress" : [
+                    { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : "0.0.0.0/0" }
+                ]
+            }
+        },
+
+        "S3FSInstance" : {
+            "Type" : "AWS::EC2::Instance",
+            "Properties" : {
+                "InstanceType" : { "Ref" : "InstanceType" },
+                "ImageId" : { "Fn::FindInMap" : [ "AWSAmazonLinuxAMI", { "Ref" : "AWS::Region" }, "201309" ]},
+                "KeyName" : { "Ref" : "KeyName" },
+                "IamInstanceProfile": { "Ref" : "S3FSProfile" },
+                "NetworkInterfaces": [{
+                    "DeviceIndex" : "0",
+                    "AssociatePublicIpAddress" : true,
+                    "DeleteOnTermination" : true,
+                    "SubnetId" : { "Ref" : "SubnetId" },
+                    "GroupSet" : [{ "Ref" : "S3FSSecurityGroup" }]
+                }],
+                "Tags" : [
+                    { "Key" : "Name", "Value" : "S3FS" },
+                    { "Key" : "Network", "Value" : "Public" }
+                ],
+                "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+                    "#! /bin/bash -v\n",
+                    "yum update -y aws-cfn-bootstrap aws-cli\n",
+
+                    "# Helper function\n",
+                    "function error_exit\n",
+                    "{\n",
+                    "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "S3FSInstanceWaitHandle" }, "'\n",
+                    "  exit 1\n",
+                    "}\n",
+
+                    "# Install packages\n",
+                    "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r S3FSInstance ",
+                    "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+
+                    "# All is well so signal success\n",
+                    "/opt/aws/bin/cfn-signal -e $? -r \"S3FSInstance setup complete\" '", { "Ref" : "S3FSInstanceWaitHandle" }, "'\n"
+                ]]}}
+            },
+            "Metadata" : {
+                "AWS::CloudFormation::Init" : {
+                    "config" : {
+                        "packages" : {
+                            "yum" : {
+                                "gcc" : [],
+                                "gcc-c++" : [],
+                                "fuse" : [],
+                                "fuse-devel" : [],
+                                "libcurl-devel" : [],
+                                "libxml2-devel" : [],
+                                "openssl-devel" : []
+                            }
+                        },
+                        "files" : {
+                            "/tmp/s3fs_install.sh" : {
+                                "content" : { "Fn::Join" : ["", [
+                                    "cd /tmp\n",
+                                    "wget https://s3fs.googlecode.com/files/s3fs-1.74.tar.gz\n",
+                                    "tar zxf s3fs-1.74.tar.gz \n",
+                                    "cd s3fs-1.74\n",
+                                    "./configure \n",
+                                    "make\n",
+                                    "make install\n",
+                                    "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o rw,allow_other,use_cache=/tmp,uid=222,gid=500\n"
+                                ]]},
+                                "mode"  : "000744",
+                                "owner" : "root",
+                                "group" : "root"
+                            }
+                        },
+                        "commands" : {
+                            "s3fs install" : {
+                                "command" : "/tmp/s3fs_install.sh",
+                                "cwd" : "/tmp",
+                                "ignoreErrors" : "false"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "S3FSInstanceWaitHandle" : {
+            "Type" : "AWS::CloudFormation::WaitConditionHandle"
+        },
+        "S3FSInstanceWaitCondition" : {
+            "Type" : "AWS::CloudFormation::WaitCondition",
+            "DependsOn" : "S3FSInstance",
+            "Properties" : {
+                "Handle" : {"Ref" : "S3FSInstanceWaitHandle"},
+                "Timeout" : "900"
+            }
+        }
+    },
+
+    "Outputs" : {
+        "SSHToS3FS" : {
+            "Description" : "SSH command to connect S3FSServer",
+            "Value" : { "Fn::Join" :["", [
+                "ssh -i /path/to/", { "Ref" : "KeyName" }, ".pem ec2-user@", { "Fn::GetAtt" : [ "S3FSInstance", "PublicDnsName" ]}
+            ]] }
+        }
+    }
+}
