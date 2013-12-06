@@ -156,12 +156,23 @@
                                     "./configure \n",
                                     "make\n",
                                     "make install\n",
-                                    "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o rw,allow_other,use_cache=/tmp,uid=222,gid=500\n"
+                                    "mkdir /mnt/s3\n",
+                                    "chmod 0777 /mnt/s3\n",
+                                    "IAMROLE=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`\n",
+                                    "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o iam_role=$IAMROLE,rw,allow_other,use_cache=/tmp,uid=222,gid=500\n"
                                 ]]},
                                 "mode"  : "000744",
                                 "owner" : "root",
                                 "group" : "root"
-                            }
+                            },
+                            "/etc/fuse.conf" : {
+                                "content" : { "Fn::Join" : ["", [
+                                    "user_allow_other\n"
+                                ]]},
+                                "mode"  : "000744",
+                                "owner" : "root",
+                                "group" : "root"
+                            }                                    
                         },
                         "commands" : {
                             "s3fs install" : {
