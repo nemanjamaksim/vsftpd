@@ -9,7 +9,7 @@ buildscript {
 }
 
 ext {
-	artifactId = 'cfn_s3fs'
+	artifactId = 'vsftpd'
 	templateBucket = 'cm-public-cfn-templates'
 }
 
