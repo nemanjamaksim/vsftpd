@@ -20,7 +20,7 @@
             "AllowedPattern" : "[-_ a-zA-Z0-9]*",
             "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
         },
-        "Password" : {
+        "UserPassword" : {
             "Description" : "ec2-user password",
             "Type" : "String",
             "MinLength" : "8",
@@ -100,7 +100,7 @@
                 "SecurityGroupIngress" : [
                     { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : "0.0.0.0/0" },
                     { "IpProtocol" : "tcp", "FromPort" : "20",  "ToPort" : "21",  "CidrIp" : "0.0.0.0/0" },
-                    { "IpProtocol" : "tcp", "FromPort" : "1024",  "ToPort" : "65535",  "CidrIp" : "0.0.0.0/0" },
+                    { "IpProtocol" : "tcp", "FromPort" : "1024",  "ToPort" : "65535",  "CidrIp" : "0.0.0.0/0" }
                 ]
             }
         },
@@ -172,8 +172,8 @@
                                     "chmod 0777 /mnt/s3\n",
                                     "IAMROLE=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`\n",
                                     "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o iam_role=$IAMROLE,rw,allow_other,use_cache=/tmp,uid=222,gid=500\n",
-                                    "ln /mnt/s3 /home/ec2-user/s3\n", 
-                                    "mkpasswd ec2-user ",{ "Ref" : "Password" } ," \n", 
+                                    "ln -s /mnt/s3 /home/ec2-user/s3\n",
+				    "adduser ftpsecure\n"
                                 ]]},
                                 "mode"  : "000744",
                                 "owner" : "root",
@@ -186,7 +186,7 @@
                                 "mode"  : "000744",
                                 "owner" : "root",
                                 "group" : "root"
-                            }                                    
+                            },                                    
 
                             "/etc/vsftpd/vsftpd.conf" : {
                                 "content" : { "Fn::Join" : ["", [
@@ -216,14 +216,19 @@
                         },
                         "commands" : {
                             "install s3fs" : {
-                                "command" : "/tmp/s3fs_install.sh",
+                                "command" : "/tmp/s3fs_install.sh &> /tmp/s3fs_install.log",
+                                "cwd" : "/tmp",
+                                "ignoreErrors" : "false"
+                            },
+                            "create ec2-user password" : {
+                                "command" : { "Fn::Join" : ["", [ "echo ",{ "Ref" : "UserPassword" } ," | passwd --stdin ec2-user" ]]},
                                 "cwd" : "/tmp",
                                 "ignoreErrors" : "false"
                             },
                             "restart vsftpd" : {
                                 "command" : "service vsftpd restart",
                                 "cwd" : "/tmp",
-                                "ignoreErrors" : "false"
+                                "ignoreErrors" : "true"
                             }
 
                         }
