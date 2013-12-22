@@ -1,6 +1,6 @@
 {
     "AWSTemplateFormatVersion" : "2010-09-09",
-    "Description" : "S3FScloudformation file.",
+    "Description" : "s3fs and vsftpd cloudformation template.",
     "Parameters" : {
         "InstanceType": {
             "Default": "t1.micro",
@@ -17,6 +17,14 @@
             "Type" : "String",
             "MinLength" : "1",
             "MaxLength" : "64",
+            "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+            "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+        },
+        "UserPassword" : {
+            "Description" : "ec2-user password",
+            "Type" : "String",
+            "MinLength" : "8",
+            "MaxLength" : "20",
             "AllowedPattern" : "[-_ a-zA-Z0-9]*",
             "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
         },
@@ -47,7 +55,7 @@
         }
     },
     "Resources" : {
-        "S3FSRole" : {
+        "S3VSFTPDRole" : {
             "Type" : "AWS::IAM::Role",
             "Properties" : {
                 "AssumeRolePolicyDocument" : {
@@ -77,40 +85,42 @@
                 }]
             }
         },
-        "S3FSProfile" : {
+        "S3VSFTPDProfile" : {
             "Type" : "AWS::IAM::InstanceProfile",
             "Properties" : {
-                "Roles" : [ { "Ref" : "S3FSRole" } ]
+                "Roles" : [ { "Ref" : "S3VSFTPDRole" } ]
             }
         },
 
-        "S3FSSecurityGroup" : {
+        "S3VSFTPDSecurityGroup" : {
             "Type" : "AWS::EC2::SecurityGroup",
             "Properties" : {
                 "VpcId" : {"Ref" : "VpcId"},
-                "GroupDescription" : "Enable HTTP/HTTPS access via port 80/443",
+                "GroupDescription" : "Enable SSH access",
                 "SecurityGroupIngress" : [
-                    { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : "0.0.0.0/0" }
+                    { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : "0.0.0.0/0" },
+                    { "IpProtocol" : "tcp", "FromPort" : "20",  "ToPort" : "21",  "CidrIp" : "0.0.0.0/0" },
+                    { "IpProtocol" : "tcp", "FromPort" : "1024",  "ToPort" : "65535",  "CidrIp" : "0.0.0.0/0" }
                 ]
             }
         },
 
-        "S3FSInstance" : {
+        "S3VSFTPDInstance" : {
             "Type" : "AWS::EC2::Instance",
             "Properties" : {
                 "InstanceType" : { "Ref" : "InstanceType" },
                 "ImageId" : { "Fn::FindInMap" : [ "AWSAmazonLinuxAMI", { "Ref" : "AWS::Region" }, "201309" ]},
                 "KeyName" : { "Ref" : "KeyName" },
-                "IamInstanceProfile": { "Ref" : "S3FSProfile" },
+                "IamInstanceProfile": { "Ref" : "S3VSFTPDProfile" },
                 "NetworkInterfaces": [{
                     "DeviceIndex" : "0",
                     "AssociatePublicIpAddress" : true,
                     "DeleteOnTermination" : true,
                     "SubnetId" : { "Ref" : "SubnetId" },
-                    "GroupSet" : [{ "Ref" : "S3FSSecurityGroup" }]
+                    "GroupSet" : [{ "Ref" : "S3VSFTPDSecurityGroup" }]
                 }],
                 "Tags" : [
-                    { "Key" : "Name", "Value" : "S3FS" },
+                    { "Key" : "Name", "Value" : "S3VSFTPD" },
                     { "Key" : "Network", "Value" : "Public" }
                 ],
                 "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
@@ -120,16 +130,16 @@
                     "# Helper function\n",
                     "function error_exit\n",
                     "{\n",
-                    "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "S3FSInstanceWaitHandle" }, "'\n",
+                    "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "S3VSFTPDInstanceWaitHandle" }, "'\n",
                     "  exit 1\n",
                     "}\n",
 
                     "# Install packages\n",
-                    "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r S3FSInstance ",
+                    "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r S3VSFTPDInstance ",
                     "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
 
                     "# All is well so signal success\n",
-                    "/opt/aws/bin/cfn-signal -e $? -r \"S3FSInstance setup complete\" '", { "Ref" : "S3FSInstanceWaitHandle" }, "'\n"
+                    "/opt/aws/bin/cfn-signal -e $? -r \"S3VSFTPDInstance setup complete\" '", { "Ref" : "S3VSFTPDInstanceWaitHandle" }, "'\n"
                 ]]}}
             },
             "Metadata" : {
@@ -137,6 +147,8 @@
                     "config" : {
                         "packages" : {
                             "yum" : {
+                                "vsftpd" : [],
+                                "expect" : [],
                                 "gcc" : [],
                                 "gcc-c++" : [],
                                 "fuse" : [],
@@ -159,7 +171,9 @@
                                     "mkdir /mnt/s3\n",
                                     "chmod 0777 /mnt/s3\n",
                                     "IAMROLE=`curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`\n",
-                                    "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o iam_role=$IAMROLE,rw,allow_other,use_cache=/tmp,uid=222,gid=500\n"
+                                    "/usr/local/bin/s3fs ", { "Ref" : "BucketName" } ," /mnt/s3 -o iam_role=$IAMROLE,rw,allow_other,use_cache=/tmp,uid=222,gid=500\n",
+                                    "ln -s /mnt/s3 /home/ec2-user/s3\n",
+				    "adduser ftpsecure\n"
                                 ]]},
                                 "mode"  : "000744",
                                 "owner" : "root",
@@ -172,37 +186,74 @@
                                 "mode"  : "000744",
                                 "owner" : "root",
                                 "group" : "root"
+                            },                                    
+
+                            "/etc/vsftpd/vsftpd.conf" : {
+                                "content" : { "Fn::Join" : ["", [
+                                "anonymous_enable=NO\n",
+                                "local_enable=YES\n",
+                                "write_enable=YES\n",
+                                "local_umask=022\n",
+                                "dirmessage_enable=YES\n",
+                                "xferlog_enable=YES\n",
+                                "connect_from_port_20=YES\n",
+                                "xferlog_file=/var/log/xferlog\n",
+                                "xferlog_std_format=YES\n",
+                                "nopriv_user=ftpsecure\n",
+                                "ascii_upload_enable=YES\n",
+                                "ascii_download_enable=YES\n",
+                                "ftpd_banner=Classmethod Advent Calendar No.18 FTP service.\n",
+                                "listen=YES\n",
+                                "pam_service_name=vsftpd\n",
+                                "userlist_enable=YES\n",
+                                "tcp_wrappers=YES\n"
+                                ]]},
+                                "mode"  : "000600",
+                                "owner" : "root",
+                                "group" : "root"
                             }                                    
+
                         },
                         "commands" : {
-                            "s3fs install" : {
-                                "command" : "/tmp/s3fs_install.sh",
+                            "install s3fs" : {
+                                "command" : "/tmp/s3fs_install.sh &> /tmp/s3fs_install.log",
                                 "cwd" : "/tmp",
                                 "ignoreErrors" : "false"
+                            },
+                            "create ec2-user password" : {
+                                "command" : { "Fn::Join" : ["", [ "echo ",{ "Ref" : "UserPassword" } ," | passwd --stdin ec2-user" ]]},
+                                "cwd" : "/tmp",
+                                "ignoreErrors" : "false"
+                            },
+                            "restart vsftpd" : {
+                                "command" : "service vsftpd restart",
+                                "cwd" : "/tmp",
+                                "ignoreErrors" : "true"
                             }
+
                         }
                     }
                 }
             }
         },
-        "S3FSInstanceWaitHandle" : {
+        "S3VSFTPDInstanceWaitHandle" : {
             "Type" : "AWS::CloudFormation::WaitConditionHandle"
         },
-        "S3FSInstanceWaitCondition" : {
+        "S3VSFTPDInstanceWaitCondition" : {
             "Type" : "AWS::CloudFormation::WaitCondition",
-            "DependsOn" : "S3FSInstance",
+            "DependsOn" : "S3VSFTPDInstance",
             "Properties" : {
-                "Handle" : {"Ref" : "S3FSInstanceWaitHandle"},
+                "Handle" : {"Ref" : "S3VSFTPDInstanceWaitHandle"},
                 "Timeout" : "900"
             }
         }
     },
 
     "Outputs" : {
-        "SSHToS3FS" : {
-            "Description" : "SSH command to connect S3FSServer",
+        "SSHToS3VSFTPD" : {
+            "Description" : "SSH command to connect S3VSFTPDServer",
             "Value" : { "Fn::Join" :["", [
-                "ssh -i /path/to/", { "Ref" : "KeyName" }, ".pem ec2-user@", { "Fn::GetAtt" : [ "S3FSInstance", "PublicDnsName" ]}
+                "ssh -i /path/to/", { "Ref" : "KeyName" }, ".pem ec2-user@", { "Fn::GetAtt" : [ "S3VSFTPDInstance", "PublicDnsName" ]}
             ]] }
         }
     }
